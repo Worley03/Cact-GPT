@@ -1,5 +1,5 @@
 // Import required modules
-const Microphone = require("node-microphone");
+const Mic = require("mic"); // Use the "mic" package
 const fs = require("fs");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
@@ -13,10 +13,11 @@ const { PvRecorder } = require("@picovoice/pvrecorder-node");
 const { Porcupine } = require("@picovoice/porcupine-node");
 
 // Initialize variables
-let mic, outputFile, micStream, rl, recorder, porcupine;
+let micInstance, micInputStream, outputFile, rl, recorder, porcupine;
 let isInterrupted = false;
 let chatHistory = [];
 
+// PicoVoice Key
 const accessKey = process.env.accessKey;
 
 // Initialize OpenAI
@@ -35,9 +36,9 @@ console.log(
 
 // Proper cleanup function
 const cleanup = () => {
-  if (mic) {
+  if (micInstance) {
     try {
-      mic.stopRecording();
+      micInstance.stop();
     } catch (e) {
       console.error("Error stopping microphone:", e);
     }
@@ -71,83 +72,63 @@ const cleanup = () => {
   process.exit(0);
 };
 
-// Setup readline interface with proper error handling
-const setupReadlineInterface = () => {
-  try {
-    rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
-
-    readline.emitKeypressEvents(process.stdin, rl);
-
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-
-    process.stdin.on("keypress", (str, key) => {
-      if (key && (key.name === "return" || key.name === "enter")) {
-        if (micStream) {
-          stopRecordingAndProcess();
-        } else {
-          startRecording();
-        }
-      } else if (key && key.ctrl && key.name === "c") {
-        cleanup();
-      }
-    });
-
-    // Handle process termination
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
-    process.on('uncaughtException', (error) => {
-      console.error('Uncaught Exception:', error);
-      cleanup();
-    });
-
-    console.log("Press Enter when you're ready to start speaking.");
-  } catch (error) {
-    console.error("Error in setupReadlineInterface:", error);
-    cleanup();
-  }
-};
-
-// Start recording with error handling
+// Start recording with the "mic" package
 const startRecording = () => {
   try {
-    mic = new Microphone();
-    outputFile = fs.createWriteStream("output.wav");
-    micStream = mic.startRecording();
+    micInstance = Mic({
+      rate: "16000",
+      channels: "1",
+      debug: false,
+      exitOnSilence: 2, // Automatically detect silence
+      fileType: "wav",
+    });
 
-    micStream.on("data", (data) => {
+    outputFile = fs.createWriteStream("output.wav");
+    micInputStream = micInstance.getAudioStream();
+
+    micInputStream.on("data", (data) => {
       try {
-        outputFile.write(data);
+        if (!outputFile.closed) {
+          outputFile.write(data);
+        }
       } catch (e) {
         console.error("Error writing audio data:", e);
         cleanup();
       }
     });
 
-    micStream.on("error", (error) => {
+    micInputStream.on("error", (error) => {
       console.error("Microphone Error:", error);
       cleanup();
     });
 
-    console.log("Recording... Press Enter to stop");
+    micInputStream.on("silence", () => {
+      console.log("Got SIGNAL silence");
+      stopRecordingAndProcess();
+    });
+
+    micInstance.start();
+    console.log("Recording... Will stop after 2 seconds of slience.");
   } catch (error) {
     console.error("Error in startRecording:", error);
     cleanup();
   }
 };
 
-// Stop recording and process the audio
 const stopRecordingAndProcess = () => {
   try {
-    mic.stopRecording();
-    outputFile.end();
-    console.log(`Recording stopped, processing audio...`);
-    transcribeAndChat();
+    if (micInstance) micInstance.stop();
+
+    if (micInputStream) {
+      micInputStream.removeAllListeners(); // Clean up listeners to prevent further events
+    }
+
+    if (outputFile) {
+      outputFile.end(() => {
+        console.log(`Recording stopped, processing audio...`);
+        transcribeAndChat(); // Continue processing the audio file
+      });
+    }
   } catch (error) {
     console.error("Error in stopRecordingAndProcess:", error);
     cleanup();
@@ -221,6 +202,7 @@ async function transcribeAndChat() {
   form.append("file", fs.createReadStream(filePath));
   form.append("model", "whisper-1");
   form.append("response_format", "text");
+  form.append("language", "en"); // Specify English language
 
   try {
     const transcriptionResponse = await axios.post(
@@ -241,7 +223,7 @@ async function transcribeAndChat() {
       {
         role: "system",
         content:
-          "You are a helpful assistant providing concise responses in at most two sentences.",
+          "You are a helpful assistant, named Cact GPT. You were a children's cactus toy that has been modified to be my office assistant. You will assist me by answering my questions in no more than two sentences. Please ask if I'd like to hear more if your response will be over two sentences.",
       },
       ...chatHistory,
       { role: "user", content: transcribedText },
@@ -262,12 +244,10 @@ async function transcribeAndChat() {
     console.log(`>> Assistant said: ${chatResponseText}`);
     await streamedAudio(chatResponseText);
 
+    startWakeWordDetection();
+
     micStream = null;
-    console.log("Press Enter to speak again, or any other key to quit.\n");
-    
-    // Call startRecording after audio streaming is complete
-    startRecording();
-    
+
   } catch (error) {
     if (error.response) {
       console.error(
@@ -282,6 +262,7 @@ async function transcribeAndChat() {
 
 // Initialize wake word detection with proper error handling
 const startWakeWordDetection = async () => {
+  console.log(`Listening for 'Hey Cactus'.`);
   try {
     porcupine = new Porcupine(
       accessKey,
@@ -299,7 +280,7 @@ const startWakeWordDetection = async () => {
       const index = porcupine.process(pcm);
       
       if (index !== -1) {
-        console.log(`Wake word "Cactus" detected!`);
+        console.log(`Wake word "Hey Cactus" detected!`);
         await recorder.stop();
         recorder.release();
         porcupine.release();
@@ -314,5 +295,4 @@ const startWakeWordDetection = async () => {
 };
 
 // Initialize the application
-setupReadlineInterface();
 startWakeWordDetection();
