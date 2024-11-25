@@ -103,7 +103,7 @@ const startRecording = () => {
     });
 
     micInputStream.on("silence", () => {
-      console.log("Got SIGNAL silence");
+      console.log("Detected silence.");
       stopRecordingAndProcess();
     });
 
