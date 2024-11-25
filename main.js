@@ -231,7 +231,7 @@ async function transcribeAndChat() {
 
     const chatResponse = await openai.chat.completions.create({
       messages: messages,
-      model: "gpt-4o-mini",
+      model: "gpt-4o",
     });
 
     const chatResponseText = chatResponse.choices[0].message.content;
