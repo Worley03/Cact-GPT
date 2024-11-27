@@ -267,7 +267,7 @@ const startWakeWordDetection = async () => {
     porcupine = new Porcupine(
       accessKey,
       ['cactus.ppn'],
-      [.95]
+      [1]
     );
 
     const frameLength = porcupine.frameLength;
