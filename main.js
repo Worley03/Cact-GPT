@@ -3,7 +3,6 @@ const Mic = require("mic"); // Use the "mic" package
 const fs = require("fs");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
-const readline = require("readline");
 const axios = require("axios");
 const FormData = require("form-data");
 const Speaker = require("speaker");
@@ -184,7 +183,6 @@ async function streamedAudio(inputText, model = inputModel, voice = inputVoice) 
       })
       .on('end', () => {
         speaker.on('close', () => {
-          // Call the next function or logic you need to execute
         });
       })
       .pipe(speaker);
