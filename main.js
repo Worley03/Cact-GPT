@@ -14,7 +14,6 @@ const { Porcupine } = require("@picovoice/porcupine-node");
 
 // Initialize variables
 let micInstance, micInputStream, outputFile, rl, recorder, porcupine;
-let isInterrupted = false;
 let chatHistory = [];
 
 // PicoVoice Key
@@ -68,21 +67,34 @@ const cleanup = () => {
   if (rl) {
     rl.close();
   }
+  
+  micInstance = Mic({
+    rate: "16000",
+    channels: "1",
+    debug: false,
+    exitOnSilence: 2, // Automatically detect silence
+    fileType: "wav",
+  });
+  
+  micInputStream = micInstance.getAudioStream();
 
-  process.exit(0);
+  startWakeWordDetection();
 };
 
 // Start recording with the "mic" package
 const startRecording = () => {
-  try {
-    micInstance = Mic({
-      rate: "16000",
-      channels: "1",
-      debug: false,
-      exitOnSilence: 2, // Automatically detect silence
-      fileType: "wav",
-    });
+  
+  micInstance = Mic({
+    rate: "16000",
+    channels: "1",
+    debug: false,
+    exitOnSilence: 2, // Automatically detect silence
+    fileType: "wav",
+  });
+  
+  micInputStream = micInstance.getAudioStream();
 
+  try {
     outputFile = fs.createWriteStream("output.wav");
     micInputStream = micInstance.getAudioStream();
 
@@ -117,8 +129,6 @@ const startRecording = () => {
 
 const stopRecordingAndProcess = () => {
   try {
-    if (micInstance) micInstance.stop();
-
     if (micInputStream) {
       micInputStream.removeAllListeners(); // Clean up listeners to prevent further events
     }
@@ -164,36 +174,26 @@ async function streamedAudio(inputText, model = inputModel, voice = inputVoice) 
       sampleRate: 44100,
     });
 
-    return new Promise((resolve, reject) => {
-      ffmpeg(response.data)
-        .toFormat("s16le")
-        .audioChannels(2)
-        .audioFrequency(44100)
-        .on('error', (err) => {
-          console.error('FFmpeg error:', err);
-          reject(err);
-        })
-        .on('end', () => {
-          // This event fires when ffmpeg finishes processing
-          speaker.on('close', () => {
-            // This event fires when the speaker finishes playing
-            resolve();
-          });
-        })
-        .pipe(speaker);
-    });
+    ffmpeg(response.data)
+      .toFormat("s16le")
+      .audioChannels(2)
+      .audioFrequency(44100)
+      .on('error', (err) => {
+        console.error('FFmpeg error:', err);
+        // Handle the error here
+      })
+      .on('end', () => {
+        speaker.on('close', () => {
+          // Call the next function or logic you need to execute
+        });
+      })
+      .pipe(speaker);
 
-  } catch (error) {
-    if (error.response) {
-      console.error(
-        `Error with HTTP request: ${error.response.status} - ${error.response.statusText}`
-      );
-    } else {
-      console.error(`Error in streamedAudio: ${error.message}`);
-    }
-    throw error;
+  } catch (err) {
+    console.error("Error in streamedAudio:", err);
   }
 }
+
 
 async function transcribeAndChat() {
   const filePath = "output.wav";
@@ -226,7 +226,7 @@ async function transcribeAndChat() {
           "You are a helpful assistant, named Cact GPT. You were a children's cactus toy that has been modified to be my office assistant. You will assist me by answering my questions in no more than two sentences. Please ask if I'd like to hear more if your response will be over two sentences.",
       },
       ...chatHistory,
-      { role: "user", content: transcribedText },
+      { role: "user", content: transcribedText},
     ];
 
     const chatResponse = await openai.chat.completions.create({
@@ -275,15 +275,13 @@ const startWakeWordDetection = async () => {
     
     await recorder.start();
 
-    while (!isInterrupted) {
+    while (true) {
       const pcm = await recorder.read();
       const index = porcupine.process(pcm);
       
       if (index !== -1) {
         console.log(`Wake word "Hey Cactus" detected!`);
         await recorder.stop();
-        recorder.release();
-        porcupine.release();
         startRecording();
         return;
       }
